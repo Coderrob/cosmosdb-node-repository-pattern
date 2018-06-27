@@ -8,18 +8,19 @@ module.exports = class CosmosDbRepository {
         if (!dbConfiguration) throw new Error('CosmosDb configurations not provided.');
 
         this.client = new documentClient(dbConfiguration.endpointUrl, { 'masterKey': dbConfiguration.authKey });
-        this.HttpStatusCodes = { NOTFOUND: 404 };
+        this.HttpStatusCodes = { NOTFOUND: 404, ALREADYEXISTS: 409 };
         this.databaseId = dbConfiguration.databaseId;
         this.collectionId = dbConfiguration.collectionId;
 
         this.ensureDatabase = function (databaseId) {
             return new Promise((resolve, reject) => {
                 this.client.readDatabase(uriFactory.createDatabaseUri(databaseId), (err, database) => {
-                    if (database) resolve(database);
+                    if (database) resolve();
                     else if (err && err.code == this.HttpStatusCodes.NOTFOUND) {
-                        this.client.createDatabase(databaseId, (err, created) => {
-                            if (err) reject(err)
-                            else resolve(created);
+                        this.client.createDatabase({ id: databaseId }, (err) => {
+                            if (err && err.code == this.HttpStatusCodes.ALREADYEXISTS) resolve();
+                            else if (err) reject(err);
+                            else resolve();
                         });
                     }
                     else reject(err);
@@ -30,11 +31,12 @@ module.exports = class CosmosDbRepository {
         this.ensureCollection = function (databaseId, collectionId) {
             return new Promise((resolve, reject) => {
                 this.client.readCollection(uriFactory.createDocumentCollectionUri(databaseId, collectionId), (err, collection) => {
-                    if (collection) resolve(collection);
+                    if (collection) resolve();
                     else if (err && err.code == this.HttpStatusCodes.NOTFOUND) {
-                        this.client.createCollection(uriFactory.createDatabaseUri(databaseId), { id: collectionId }, { offerThroughput: 400 }, (err, created) => {
-                            if (err) reject(err)
-                            else resolve(created);
+                        this.client.createCollection(uriFactory.createDatabaseUri(databaseId), { id: collectionId }, { offerThroughput: 400 }, (err) => {
+                            if (err && err.code == this.HttpStatusCodes.ALREADYEXISTS) resolve();
+                            if (err) reject(err);
+                            else resolve();
                         });
                     }
                     else reject(err);
@@ -101,9 +103,10 @@ module.exports = class CosmosDbRepository {
                         // Set the ID of the latest document to the database stored record.
                         const documentId = result.id;
                         // Combine the updated properties from the document to the database result.
-                        const doc = { ...result, ...document, id: documentId }
+                        Object.assign(result, document);
+                        result.id = documentId;
                         // Update the document with the latest properties
-                        this.client.replaceDocument(uriFactory.createDocumentUri(this.databaseId, this.collectionId, documentId), doc, (err, updated) => {
+                        this.client.replaceDocument(uriFactory.createDocumentUri(this.databaseId, this.collectionId, result.id), result, (err, updated) => {
                             if (err) reject(err);
                             else resolve(updated);
                         });
